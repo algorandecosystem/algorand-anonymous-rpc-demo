@@ -1,30 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Client, PublicKeyConfig } from "ohttp-js";
-// CipherSuite is not re-exported by ohttp-js (exports field restricts subpaths),
-// so we import it from the hpke bundle it ships internally.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore – no declaration file for this internal bundle path
-import { CipherSuite, Kdf, Aead } from "../node_modules/ohttp-js/esm/deps/deno.land/x/hpke@v0.18.2/mod.js";
+import { Algodv2 } from "algosdk";
+import { OhttpAlgodHTTPClient } from "./ohttpAlgodClient";
 
-
-// Workaround for missing export in ohttp-js
-async function clientForConfig(config: Uint8Array): Promise<Client> {
-  const keyId = config[0];
-  const kemId = (config[1] << 8) | config[2];
-  const suite = new CipherSuite({ kem: kemId, kdf: Kdf.HkdfSha256, aead: Aead.Aes128Gcm });
-  const kemContext = await suite.kemContext();
-  const publicKey = await kemContext.deserializePublicKey(config.slice(3, 3 + suite.kemPublicKeySize));
-  const offset = 3 + suite.kemPublicKeySize + 2;
-  const kdfId = (config[offset] << 8) | config[offset + 1];
-  const aeadId = (config[offset + 2] << 8) | config[offset + 3];
-  return new Client(new PublicKeyConfig(keyId, kemId, kdfId, aeadId, publicKey));
-}
-
-const KEY_CONFIG_URL = "https://ohttp.nodely.io/ohttp-configs";
-const RELAY_URL = "https://relay.oblivious.network/great-apple-60";
-const TARGET_URL = "http://testnet-api.4160.nodely.dev/v2/status";
+const ALGOD_BASE_URL = "http://testnet-api.4160.nodely.dev";
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -39,27 +19,11 @@ export default function OhttpFetcher() {
     setError("");
 
     try {
-      const configResp = await fetch(KEY_CONFIG_URL);
-      if (!configResp.ok) {
-        throw new Error(`Failed to fetch key config: ${configResp.status} ${configResp.statusText}`);
-      }
-      const configBytes = new Uint8Array(await configResp.arrayBuffer());
+      const httpClient = new OhttpAlgodHTTPClient(ALGOD_BASE_URL);
+      const algod = new Algodv2(httpClient, ALGOD_BASE_URL);
+      const nodeStatus = await algod.status().do();
 
-      const client = await clientForConfig(configBytes);
-
-      const request = new Request(TARGET_URL);
-      const ctx = await client.encapsulateRequest(request);
-
-      const relayRequest = ctx.request.request(RELAY_URL);
-      const relayResp = await fetch(relayRequest);
-      if (!relayResp.ok) {
-        throw new Error(`Relay error: ${relayResp.status} ${relayResp.statusText}`);
-      }
-
-      const response = await ctx.decapsulateResponse(relayResp);
-      const json = await response.json();
-
-      setResult(json);
+      setResult(nodeStatus);
       setStatus("success");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -104,7 +68,7 @@ export default function OhttpFetcher() {
             </span>
           </div>
           <pre className="p-4 text-sm text-zinc-800 dark:text-zinc-200 font-mono whitespace-pre-wrap break-all">
-            {JSON.stringify(result, null, 2)}
+            {JSON.stringify(result, (_k, v) => typeof v === "bigint" ? v.toString() : v, 2)}
           </pre>
         </div>
       )}
