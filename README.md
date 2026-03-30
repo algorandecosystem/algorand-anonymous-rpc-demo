@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Algorand OHTTP Demo
+
+A Next.js demo that fetches Algorand testnet node status via **Oblivious HTTP (OHTTP)**, hiding the client's IP address from the API server. It uses `ohttp-js` for HPKE-based request encapsulation, Fastly's relay network, and Nodely's OHTTP gateway in front of their Algorand RPC nodes.
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    participant C as Client<br/>(your browser)
+    participant R as Fastly Relays<br/>(oblivious.network)
+    participant G as Gateways<br/>(nodely.io)
+    participant A as Algorand RPCs<br/>(nodely.io/dev)
+
+    C->>C: Fetch OHTTP key config from gateway
+    C->>C: Encrypt request with HPKE using gateway public key
+    C->>R: Send encrypted OHTTP message
+    Note over R: Sees client IP,<br/>not plaintext request
+    R->>G: Forward opaque blob
+    Note over G: Sees request,<br/>not client IP
+    G->>A: Proxy decrypted request
+    A->>G: Algorand RPC response
+    G->>G: Re-encrypt response
+    G->>R: Return encrypted response
+    R->>C: Forward encrypted response
+    C->>C: Decrypt response in browser
+```
+
+### Privacy properties
+
+1. **Encrypt & encapsulate** — the algosdk request is wrapped in an HPKE-encrypted OHTTP message using the gateway's public key. The relay never sees the plaintext.
+2. **Relay forwards** — the relay passes the opaque blob to the gateway. It only knows your IP, not what you are querying. Relays are operated by a third party (Fastly) for additional trust separation.
+3. **Gateway decrypts & proxies** — the gateway decrypts the message and calls algod on your behalf. It sees the query but not your IP.
+4. **Response re-encrypted** — the reply travels back through the relay, still encrypted, and is decrypted only in your browser.
+5. **Low traffic service** — optimized for low-volume but sensitive traffic such as mobile and web wallets.
+
+## Architecture
+
+| Component | Provider | Role |
+|-----------|----------|------|
+| OHTTP Relay | `relay.oblivious.network` (Fastly) | Strips client IP, forwards encrypted blob |
+| OHTTP Gateway | `ohttp.nodely.io` | Decrypts requests, proxies to algod |
+| Algorand RPC | `testnet-api.4160.nodely.dev` | Algorand node API |
+| HPKE library | `ohttp-js` | Client-side request encryption/decryption |
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to see the demo.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Click **Fetch Status** to fire a live OHTTP-encapsulated request to the Algorand testnet and display the node status response.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Key files
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [app/ohttpAlgodClient.ts](app/ohttpAlgodClient.ts) — implements `BaseHTTPClient` from algosdk using OHTTP transport
+- [app/OhttpFetcher.tsx](app/OhttpFetcher.tsx) — React component wiring the client to the UI
+- [app/page.tsx](app/page.tsx) — main page with the fetcher and flow diagram
